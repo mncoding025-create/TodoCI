@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TodoCI - ระบบจดงาน</title>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--ink:#1f2937;--mut:#6b7280;--pri:#4f46e5;--line:#e5e7eb;--hi:#ef4444;--md:#f59e0b;--lo:#10b981}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Sarabun","Noto Sans Thai",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;padding:22px 16px}
+header h1{margin:0;font-size:24px}header p{margin:4px 0 0;opacity:.85;font-size:14px}
+main{max-width:860px;margin:-14px auto 40px;padding:0 14px}
+.card{background:var(--card);border-radius:14px;box-shadow:0 2px 10px rgba(0,0,0,.06);padding:16px;margin-bottom:14px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+.stat{text-align:center;padding:10px;border-radius:10px;background:#f9fafb}
+.stat b{display:block;font-size:24px}.stat span{font-size:12px;color:var(--mut)}
+.bar{height:8px;background:var(--line);border-radius:99px;margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--lo);width:0;transition:width .4s}
+form.add{display:grid;grid-template-columns:1fr 150px 120px;gap:8px}
+form.add input[name=tags]{grid-column:1/3}
+input,select,button{font:inherit;padding:9px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+button{cursor:pointer;background:var(--pri);color:#fff;border:0}
+button.ghost{background:#eef2ff;color:var(--pri)}button.del{background:#fee2e2;color:#b91c1c}
+.filters{display:flex;flex-wrap:wrap;gap:8px}.filters input{flex:1;min-width:140px}
+ul{list-style:none;margin:0;padding:0}
+li.task{display:flex;gap:10px;align-items:center;padding:12px 4px;border-bottom:1px solid var(--line)}
+li.task:last-child{border:0}
+.dot{width:10px;height:10px;border-radius:50%;flex:none}
+.hi{background:var(--hi)}.md{background:var(--md)}.lo{background:var(--lo)}
+.body{flex:1;min-width:0}.title{font-weight:600;word-break:break-word}
+.done .title{text-decoration:line-through;color:var(--mut)}
+.meta{font-size:12px;color:var(--mut);margin-top:2px}
+.late{color:var(--hi);font-weight:600}
+.tag{background:#eef2ff;color:var(--pri);border-radius:99px;padding:1px 8px;margin-right:4px}
+.acts{display:flex;gap:6px;flex-wrap:wrap}.acts button{padding:5px 9px;font-size:13px}
+.empty{text-align:center;color:var(--mut);padding:24px}
+#msg{color:#b91c1c;font-size:14px;min-height:20px}
+@media(max-width:560px){form.add{grid-template-columns:1fr}form.add input[name=tags]{grid-column:auto}li.task{flex-wrap:wrap}}
+</style>
+</head>
+<body>
+<header><h1>📝 TodoCI</h1><p>ระบบจดงาน — พัฒนาด้วย GitHub + Jenkins CI/CD</p></header>
+<main>
+  <div class="card">
+    <div class="stats" id="stats"></div>
+    <div class="bar"><i id="bar"></i></div>
+  </div>
+  <div class="card">
+    <form class="add" id="addForm">
+      <input name="title" placeholder="งานที่ต้องทำ..." required maxlength="200">
+      <input name="due" type="date">
+      <select name="priority"><option value="high">สำคัญมาก</option><option value="medium" selected>ปานกลาง</option><option value="low">ไม่เร่งด่วน</option></select>
+      <input name="tags" placeholder="แท็ก (คั่นด้วย comma) เช่น เรียน,รายงาน">
+      <button>เพิ่มงาน</button>
+    </form>
+    <div id="msg"></div>
+  </div>
+  <div class="card">
+    <div class="filters">
+      <input id="q" placeholder="ค้นหา...">
+      <select id="fstatus"><option value="">ทุกสถานะ</option><option value="todo">รอทำ</option><option value="doing">กำลังทำ</option><option value="done">เสร็จแล้ว</option></select>
+      <select id="fsort"><option value="id">เรียงตามลำดับ</option><option value="due">เรียงตามกำหนดส่ง</option><option value="priority">เรียงตามความสำคัญ</option><option value="title">เรียงตามชื่อ</option></select>
+      <button class="ghost" id="clearDone">ล้างงานที่เสร็จ</button>
+    </div>
+    <ul id="list"></ul>
+  </div>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const TH = {todo:"รอทำ",doing:"กำลังทำ",done:"เสร็จแล้ว"};
+const DOT = {high:"hi",medium:"md",low:"lo"};
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(path, opt={}) {
+  const r = await fetch(path, {headers:{"Content-Type":"application/json"}, ...opt});
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || "เกิดข้อผิดพลาด");
+  return data;
+}
+function err(e){ $("#msg").textContent = e.message || e; }
+
+async function load() {
+  const p = new URLSearchParams();
+  if ($("#q").value) p.set("q", $("#q").value);
+  if ($("#fstatus").value) p.set("status", $("#fstatus").value);
+  p.set("sort", $("#fsort").value);
+  const [tasks, st] = await Promise.all([api("/api/tasks?" + p), api("/api/stats")]);
+  const today = new Date().toISOString().slice(0,10);
+  $("#stats").innerHTML =
+    `<div class="stat"><b>${st.total}</b><span>ทั้งหมด</span></div>` +
+    `<div class="stat"><b>${st.by_status.todo}</b><span>รอทำ</span></div>` +
+    `<div class="stat"><b>${st.by_status.doing}</b><span>กำลังทำ</span></div>` +
+    `<div class="stat"><b>${st.by_status.done}</b><span>เสร็จแล้ว</span></div>` +
+    `<div class="stat"><b style="color:var(--hi)">${st.overdue}</b><span>เลยกำหนด</span></div>`;
+  $("#bar").style.width = st.completion_rate + "%";
+  $("#list").innerHTML = tasks.length ? tasks.map(t => {
+    const late = t.due && t.status !== "done" && t.due < today;
+    return `<li class="task ${t.status}">
+      <span class="dot ${DOT[t.priority]}" title="${t.priority}"></span>
+      <div class="body"><div class="title">${esc(t.title)}</div>
+        <div class="meta">${TH[t.status]}${t.due ? ` · <span class="${late?"late":""}">ส่ง ${t.due}${late?" (เลยกำหนด)":""}</span>` : ""}
+        ${t.tags.map(g => `<span class="tag">#${esc(g)}</span>`).join("")}</div></div>
+      <div class="acts">
+        ${t.status === "todo" ? `<button class="ghost" onclick="setS(${t.id},'doing')">เริ่มทำ</button>` : ""}
+        ${t.status !== "done" ? `<button onclick="setS(${t.id},'done')">เสร็จ</button>` : `<button class="ghost" onclick="setS(${t.id},'todo')">ทำใหม่</button>`}
+        <button class="del" onclick="del(${t.id})">ลบ</button></div></li>`;
+  }).join("") : '<div class="empty">ยังไม่มีงาน — เพิ่มงานแรกได้เลย 🎉</div>';
+}
+const setS = (id, status) => api("/api/tasks/" + id, {method:"PATCH", body:JSON.stringify({status})}).then(load).catch(err);
+const del = id => confirm("ลบงานนี้?") && api("/api/tasks/" + id, {method:"DELETE"}).then(load).catch(err);
+
+$("#addForm").addEventListener("submit", e => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  api("/api/tasks", {method:"POST", body:JSON.stringify({
+    title:f.get("title"), due:f.get("due") || null, priority:f.get("priority"), tags:f.get("tags")})})
+    .then(() => { e.target.reset(); $("#msg").textContent = ""; load(); }).catch(err);
+});
+$("#clearDone").onclick = () => api("/api/clear-done", {method:"POST"}).then(load).catch(err);
+["#q","#fstatus","#fsort"].forEach(s => $(s).addEventListener("input", load));
+load().catch(err);
+</script>
+</body>
+</html>
