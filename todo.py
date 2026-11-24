@@ -1,5 +1,6 @@
 """TodoCI: logic หลักของระบบจดงาน (ไม่ผูกกับ UI หรือเว็บ)"""
 import json
+import os
 from dataclasses import asdict, dataclass, field, fields
 from datetime import date
 from typing import Dict, Iterable, List, Optional, Union
